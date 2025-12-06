@@ -68,23 +68,23 @@
             // leekzCodeTextBox1
             // 
             leekzCodeTextBox1.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            leekzCodeTextBox1.BorderStyle = BorderStyle.Fixed3D;
             leekzCodeTextBox1.CodeBackColor = SystemColors.Window;
-            leekzCodeTextBox1.CodeFont = new Font("Consolas", 12F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            leekzCodeTextBox1.CodeFont = new Font("Segoe UI", 9F);
             leekzCodeTextBox1.CodeForeColor = SystemColors.WindowText;
             leekzCodeTextBox1.CodeWordWrap = false;
             leekzCodeTextBox1.LineNumberBackColor = SystemColors.Control;
-            leekzCodeTextBox1.LineNumberChangedColor = Color.Gold;
+            leekzCodeTextBox1.LineNumberChangedColor = Color.Red;
             leekzCodeTextBox1.LineNumberDock = CodeTextBox.LeekzCodeTextBox.LineNumberDockSide.Left;
             leekzCodeTextBox1.LineNumberForeColor = Color.Gray;
             leekzCodeTextBox1.LineNumberSeperatorColor = Color.Silver;
-            leekzCodeTextBox1.LineNumberSeperatorWith = 2;
+            leekzCodeTextBox1.LineNumberSeperatorWith = 4;
             leekzCodeTextBox1.Location = new Point(12, 51);
             leekzCodeTextBox1.MaxZoomFactor = 5F;
             leekzCodeTextBox1.MinZoomFactor = 0.5F;
             leekzCodeTextBox1.Name = "leekzCodeTextBox1";
             leekzCodeTextBox1.Size = new Size(776, 387);
             leekzCodeTextBox1.TabIndex = 3;
+            leekzCodeTextBox1.Text = "leekzCodeTextBox1";
             leekzCodeTextBox1.ZoomFactor = 1F;
             // 
             // Form1

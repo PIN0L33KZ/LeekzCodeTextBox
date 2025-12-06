@@ -1,6 +1,8 @@
 ﻿using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.InteropServices;
+
 
 namespace CodeTextBox
 {
@@ -8,8 +10,9 @@ namespace CodeTextBox
     {
         private const int EM_LINESCROLL = 0x00B6;
 
-        [DllImport("user32.dll")]
-        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+        [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
+        private static partial IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
 
         public enum LineNumberDockSide
         {
@@ -25,8 +28,6 @@ namespace CodeTextBox
 
         // Has MarkAsSaved() ever been called?
         private bool _hasSavedSnapshot;
-
-        // Width of the separator line (backing field for property)
 
         public LeekzCodeTextBox()
         {
@@ -54,7 +55,7 @@ namespace CodeTextBox
             RTB_Text.MouseWheel += RTB_Text_MouseWheel;
             PNL_LineNumber.MouseWheel += PNL_LineNumber_MouseWheel;
 
-            // No focus steal – keeps selection in RTB_Text
+            // Do NOT grab focus in the line number panel (keeps selection in RTB_Text)
             // PNL_LineNumber.MouseEnter += (s, e) => PNL_LineNumber.Focus();
 
             // Apply initial docking based on property
@@ -116,12 +117,13 @@ namespace CodeTextBox
 
         // ---------------------------------------------------------
         //  Hide inherited visual properties on the UserControl
+        //  (use 'new' instead of 'override' to avoid nullability warnings)
         // ---------------------------------------------------------
 
         [Browsable(false)]
         [EditorBrowsable(EditorBrowsableState.Never)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public override Color BackColor
+        public new Color BackColor
         {
             get => base.BackColor;
             set => base.BackColor = value;
@@ -130,7 +132,7 @@ namespace CodeTextBox
         [Browsable(false)]
         [EditorBrowsable(EditorBrowsableState.Never)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public override Color ForeColor
+        public new Color ForeColor
         {
             get => base.ForeColor;
             set => base.ForeColor = value;
@@ -139,7 +141,7 @@ namespace CodeTextBox
         [Browsable(false)]
         [EditorBrowsable(EditorBrowsableState.Never)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public override Image? BackgroundImage
+        public new Image? BackgroundImage
         {
             get => base.BackgroundImage;
             set => base.BackgroundImage = value;
@@ -148,7 +150,7 @@ namespace CodeTextBox
         [Browsable(false)]
         [EditorBrowsable(EditorBrowsableState.Never)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public override ImageLayout BackgroundImageLayout
+        public new ImageLayout BackgroundImageLayout
         {
             get => base.BackgroundImageLayout;
             set => base.BackgroundImageLayout = value;
@@ -157,7 +159,7 @@ namespace CodeTextBox
         [Browsable(false)]
         [EditorBrowsable(EditorBrowsableState.Never)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public override Font Font
+        public new Font Font
         {
             get => base.Font;
             set => base.Font = value;
@@ -429,11 +431,13 @@ namespace CodeTextBox
         [Description("Text content of the code editor.")]
         [Browsable(true)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+        [AllowNull]
         public override string Text
         {
             get => RTB_Text.Text;
-            set => RTB_Text.Text = value;
+            set => RTB_Text.Text = value ?? string.Empty;
         }
+
 
         // ---------------------------------------------------------
         //  TextChanged – detect changed lines
@@ -530,7 +534,7 @@ namespace CodeTextBox
                 RTB_Text.Handle,
                 EM_LINESCROLL,
                 IntPtr.Zero,
-                linesToScroll);
+                (IntPtr)linesToScroll);
 
             PNL_LineNumber.Invalidate();
         }
