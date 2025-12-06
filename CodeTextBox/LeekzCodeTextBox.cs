@@ -3,16 +3,15 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
-
 namespace CodeTextBox
 {
     public partial class LeekzCodeTextBox : UserControl
     {
         private const int EM_LINESCROLL = 0x00B6;
 
+        // P/Invoke for scrolling the RichTextBox by logical lines.
         [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
         private static partial IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
-
 
         public enum LineNumberDockSide
         {
@@ -20,20 +19,17 @@ namespace CodeTextBox
             Right
         }
 
-        // Lines that are currently changed compared to the last saved snapshot
-        private readonly HashSet<int> _changedLines = [];
-
-        // Snapshot of saved lines
+        // Snapshot of lines at the moment MarkAsSaved() was last called.
         private string[] _savedLines = [];
 
-        // Has MarkAsSaved() ever been called?
+        // True once MarkAsSaved() was called at least once.
         private bool _hasSavedSnapshot;
 
         public LeekzCodeTextBox()
         {
             InitializeComponent();
 
-            // Enable double buffering on the UserControl itself
+            // Enable double buffering on the UserControl itself.
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint |
                 ControlStyles.UserPaint |
@@ -41,28 +37,30 @@ namespace CodeTextBox
                 true);
             UpdateStyles();
 
-            // Enable double buffering on inner controls (Panel + RichTextBox)
+            // Enable double buffering on inner controls (panel + RichTextBox).
             EnableDoubleBuffering(PNL_LineNumber);
             EnableDoubleBuffering(RTB_Text);
 
-            // Paint handler for the line number panel
+            // Paint handler for the line number panel.
             PNL_LineNumber.Paint += PNL_LineNumber_Paint;
 
-            // Events for the code area
+            // Events for the code area.
             InitEvents();
 
-            // Mouse wheel handling (zoom / scroll)
+            // Mouse wheel handling (zoom / scroll).
             RTB_Text.MouseWheel += RTB_Text_MouseWheel;
             PNL_LineNumber.MouseWheel += PNL_LineNumber_MouseWheel;
 
-            // Do NOT grab focus in the line number panel (keeps selection in RTB_Text)
+            // Do NOT grab focus in the line number panel (keeps selection in RTB_Text).
             // PNL_LineNumber.MouseEnter += (s, e) => PNL_LineNumber.Focus();
 
-            // Apply initial docking based on property
+            // Apply initial docking based on property.
             ApplyLineNumberDock();
         }
 
-        // Turn on DoubleBuffered via reflection for controls that do not expose it publicly
+        /// <summary>
+        /// Enables double buffering on a control that does not expose the property publicly.
+        /// </summary>
         private static void EnableDoubleBuffering(Control? control)
         {
             if(control == null)
@@ -80,7 +78,7 @@ namespace CodeTextBox
 
         private void InitEvents()
         {
-            // Redraw line numbers when the text area changes
+            // Redraw line numbers whenever the text area changes visually.
             RTB_Text.VScroll += (_, _) => PNL_LineNumber.Invalidate();
             RTB_Text.TextChanged += RTB_Text_TextChanged;
             RTB_Text.Resize += (_, _) => PNL_LineNumber.Invalidate();
@@ -88,12 +86,12 @@ namespace CodeTextBox
         }
 
         // ---------------------------------------------------------
-        //  Public API – Save / Change tracking
+        //  Public API – save / change tracking
         // ---------------------------------------------------------
 
         /// <summary>
-        /// Marks the current text as saved. All change markers are cleared and
-        /// the current state becomes the baseline for future change tracking.
+        /// Marks the current text as saved.
+        /// The current lines are stored as the baseline for future comparisons.
         /// </summary>
         public void MarkAsSaved()
         {
@@ -101,18 +99,38 @@ namespace CodeTextBox
             _savedLines = new string[lines.Length];
             Array.Copy(lines, _savedLines, lines.Length);
 
-            _changedLines.Clear();
             _hasSavedSnapshot = true;
 
             PNL_LineNumber.Invalidate();
         }
 
         /// <summary>
-        /// Returns true if there is a saved snapshot and no lines differ from it.
+        /// Returns true if there is a saved snapshot and all lines are identical to it.
+        /// This method performs a full comparison only when called.
         /// </summary>
         public bool IsSaved()
         {
-            return _hasSavedSnapshot && _changedLines.Count == 0;
+            if(!_hasSavedSnapshot)
+            {
+                return false;
+            }
+
+            string[] currentLines = RTB_Text.Lines;
+
+            if(currentLines.Length != _savedLines.Length)
+            {
+                return false;
+            }
+
+            for(int i = 0; i < currentLines.Length; i++)
+            {
+                if(!string.Equals(currentLines[i], _savedLines[i], StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         // ---------------------------------------------------------
@@ -166,7 +184,7 @@ namespace CodeTextBox
         }
 
         // ---------------------------------------------------------
-        //  Public Properties – Code area
+        //  Public properties – code area
         // ---------------------------------------------------------
 
         [Category("Code")]
@@ -228,7 +246,7 @@ namespace CodeTextBox
         }
 
         // ---------------------------------------------------------
-        //  Public Properties – Line numbers
+        //  Public properties – line numbers
         // ---------------------------------------------------------
 
         [Category("Line Numbers")]
@@ -339,7 +357,7 @@ namespace CodeTextBox
         }
 
         // ---------------------------------------------------------
-        //  Public Properties – Zoom / text
+        //  Public properties – zoom / text
         // ---------------------------------------------------------
 
         [Category("Behaviour")]
@@ -411,7 +429,7 @@ namespace CodeTextBox
                     v = MaxZoomFactor;
                 }
 
-                // Safety net for RichTextBox limits
+                // Safety net for RichTextBox limits.
                 if(v < 0.1f)
                 {
                     v = 0.1f;
@@ -438,56 +456,25 @@ namespace CodeTextBox
             set => RTB_Text.Text = value ?? string.Empty;
         }
 
-
         // ---------------------------------------------------------
-        //  TextChanged – detect changed lines
+        //  TextChanged – lightweight: repaint line numbers only
         // ---------------------------------------------------------
 
         private void RTB_Text_TextChanged(object? sender, EventArgs e)
         {
-            string[] currentLines = RTB_Text.Lines;
-
-            // If there is no saved snapshot yet, the baseline is an empty document
-            if(!_hasSavedSnapshot)
-            {
-                _savedLines ??= [];
-            }
-
-            _changedLines.Clear();
-
-            int max = Math.Max(currentLines.Length, _savedLines.Length);
-
-            for(int i = 0; i < max; i++)
-            {
-                // New lines (beyond the saved snapshot) are always considered changed,
-                // even if they are empty.
-                if(i >= _savedLines.Length)
-                {
-                    _ = _changedLines.Add(i);
-                    continue;
-                }
-
-                string current = i < currentLines.Length ? currentLines[i] : string.Empty;
-                string saved = _savedLines[i];
-
-                if(!string.Equals(current, saved, StringComparison.Ordinal))
-                {
-                    _ = _changedLines.Add(i);
-                }
-            }
-
+            // No full diff here – just trigger a repaint of line numbers and change markers.
             PNL_LineNumber.Invalidate();
         }
 
         // ---------------------------------------------------------
-        //  MouseWheel handling
+        //  Mouse wheel handling
         // ---------------------------------------------------------
 
         private void RTB_Text_MouseWheel(object? sender, MouseEventArgs e)
         {
             if((ModifierKeys & Keys.Control) == Keys.Control)
             {
-                // RichTextBox handles the zoom internally – we just redraw the line numbers
+                // RichTextBox handles the zoom internally – we just redraw the line numbers.
                 PNL_LineNumber.Invalidate();
             }
         }
@@ -506,7 +493,7 @@ namespace CodeTextBox
 
         private void HandleZoomFromMouseWheel(MouseEventArgs e)
         {
-            float step = 0.1f;
+            const float step = 0.1f;
 
             if(e.Delta > 0)
             {
@@ -536,6 +523,9 @@ namespace CodeTextBox
                 IntPtr.Zero,
                 (IntPtr)linesToScroll);
 
+            // We *could* skip this Invalidate and rely only on RTB_Text.VScroll,
+            // but keeping it here guarantees the panel updates even if the scroll
+            // message does not raise VScroll for some reason.
             PNL_LineNumber.Invalidate();
         }
 
@@ -543,7 +533,10 @@ namespace CodeTextBox
         //  Drawing line numbers
         // ---------------------------------------------------------
 
-        // Internal helper: creates/updates the line number font without triggering a repaint.
+        /// <summary>
+        /// Creates or updates the line number font based on the code font
+        /// without triggering a repaint.
+        /// </summary>
         private void RecreateLineNumberFont()
         {
             Font textFont = RTB_Text.Font;
@@ -572,16 +565,16 @@ namespace CodeTextBox
 
             if(LineNumberFont == null)
             {
-                // Do NOT call SyncLineNumberFontFromText() here to avoid recursive invalidation
+                // Avoid calling SyncLineNumberFontFromText() here to prevent recursive invalidation.
                 RecreateLineNumberFont();
             }
 
             Font baseFont = LineNumberFont!;
 
-            // Draw base separator line over the full height
+            // Draw base separator line over the full height.
             DrawSeparator(e);
 
-            // Apply zoom to line number font
+            // Apply zoom to the line number font.
             float zoom = RTB_Text.ZoomFactor;
             using Font lnFont = new(
                 baseFont.FontFamily,
@@ -593,14 +586,14 @@ namespace CodeTextBox
             int sepWidth = LineNumberSeperatorWith <= 0 ? 1 : LineNumberSeperatorWith;
             int halfWidth = sepWidth / 2;
 
-            // X position of the separator line (centre of the line)
+            // X position of the separator line (centre of the line).
             int separatorX = LineNumberDock == LineNumberDockSide.Left
                 ? PNL_LineNumber.Width - halfWidth - 1
                 : halfWidth;
 
             using Pen changedPen = new(LineNumberChangedColor, sepWidth);
 
-            // First visible logical line index
+            // First visible logical line index.
             int firstCharIndex = RTB_Text.GetCharIndexFromPosition(new Point(0, 0));
             int firstLine = RTB_Text.GetLineFromCharIndex(firstCharIndex);
             if(firstLine < 0)
@@ -608,22 +601,37 @@ namespace CodeTextBox
                 firstLine = 0;
             }
 
-            // Last logical line is always the last index in Lines[]
-            int lastLine = lines.Length - 1;
-
+            int lastLogicalLine = lines.Length - 1;
             float maxNumberWidth = 0f;
+            int panelHeight = PNL_LineNumber.Height;
 
-            for(int line = firstLine; line <= lastLine; line++)
+            for(int line = firstLine; line <= lastLogicalLine; line++)
             {
-                // For each logical line always use the first character of the line.
-                int charIndex = RTB_Text.GetFirstCharIndexFromLine(line);
-                if(charIndex < 0)
+                int charIndex;
+
+                // For the first visible line, use the character at the top of the control
+                // (important for wrapped lines). For all other lines, use the logical line start.
+                if(line == firstLine)
                 {
-                    continue;
+                    charIndex = firstCharIndex;
+                }
+                else
+                {
+                    charIndex = RTB_Text.GetFirstCharIndexFromLine(line);
+                    if(charIndex < 0)
+                    {
+                        continue;
+                    }
                 }
 
                 Point pos = RTB_Text.GetPositionFromCharIndex(charIndex);
                 float y = pos.Y;
+
+                // Stop once we are below the visible area – only visible lines are processed.
+                if(y > panelHeight)
+                {
+                    break;
+                }
 
                 string lineNumberText = (line + 1).ToString();
 
@@ -633,22 +641,37 @@ namespace CodeTextBox
                     maxNumberWidth = size.Width;
                 }
 
-                float x;
-                if(LineNumberDock == LineNumberDockSide.Left)
-                {
-                    // Right-aligned in the panel
-                    x = PNL_LineNumber.Width - size.Width - 4;
-                }
-                else
-                {
-                    // Left-aligned in the panel
-                    x = 4;
-                }
+                float x = LineNumberDock == LineNumberDockSide.Left
+                    ? PNL_LineNumber.Width - size.Width - 4
+                    : 4;
 
                 e.Graphics.DrawString(lineNumberText, lnFont, brush, x, y);
 
-                // Draw change segment on the separator if this line is changed
-                if(_changedLines.Contains(line))
+                // Decide whether this line differs from the saved snapshot.
+                bool isChanged = false;
+
+                if(_hasSavedSnapshot)
+                {
+                    if(line >= _savedLines.Length)
+                    {
+                        isChanged = true;
+                    }
+                    else if(!string.Equals(lines[line], _savedLines[line], StringComparison.Ordinal))
+                    {
+                        isChanged = true;
+                    }
+                }
+                else
+                {
+                    // Before the first save: treat any non-empty line, or any line after the first,
+                    // as "changed" compared to an empty document baseline.
+                    if(!string.IsNullOrEmpty(lines[line]) || line > 0)
+                    {
+                        isChanged = true;
+                    }
+                }
+
+                if(isChanged)
                 {
                     int y1 = (int)y;
                     int y2 = (int)(y + size.Height);
@@ -657,9 +680,9 @@ namespace CodeTextBox
                 }
             }
 
-            // Adjust panel width so numbers are not cut off
+            // Adjust panel width so that numbers are not cut off.
             int desiredWidth = (int)Math.Ceiling(maxNumberWidth) + 8; // padding
-            int minWidth = 24;
+            const int minWidth = 24;
 
             if(desiredWidth < minWidth)
             {
@@ -677,7 +700,7 @@ namespace CodeTextBox
             int sepWidth = LineNumberSeperatorWith <= 0 ? 1 : LineNumberSeperatorWith;
             int halfWidth = sepWidth / 2;
 
-            // centre of the separator line
+            // Centre of the separator line.
             int separatorX = LineNumberDock == LineNumberDockSide.Left
                 ? PNL_LineNumber.Width - halfWidth - 1
                 : halfWidth;

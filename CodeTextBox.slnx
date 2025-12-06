@@ -1,4 +1,3 @@
 <Solution>
   <Project Path="CodeTextBox/CodeTextBox.csproj" />
-  <Project Path="TestApp/TestApp.csproj" />
 </Solution>

@@ -77,10 +77,10 @@
             leekzCodeTextBox1.LineNumberDock = CodeTextBox.LeekzCodeTextBox.LineNumberDockSide.Left;
             leekzCodeTextBox1.LineNumberForeColor = Color.Gray;
             leekzCodeTextBox1.LineNumberSeperatorColor = Color.Silver;
-            leekzCodeTextBox1.LineNumberSeperatorWith = 4;
+            leekzCodeTextBox1.LineNumberSeperatorWith = 2;
             leekzCodeTextBox1.Location = new Point(12, 51);
-            leekzCodeTextBox1.MaxZoomFactor = 5F;
-            leekzCodeTextBox1.MinZoomFactor = 0.5F;
+            leekzCodeTextBox1.MaxZoomFactor = 3F;
+            leekzCodeTextBox1.MinZoomFactor = 0.8F;
             leekzCodeTextBox1.Name = "leekzCodeTextBox1";
             leekzCodeTextBox1.Size = new Size(776, 387);
             leekzCodeTextBox1.TabIndex = 3;
