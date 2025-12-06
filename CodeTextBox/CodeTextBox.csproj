@@ -1,11 +1,30 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+	<PropertyGroup>
+		<!-- Target framework and WinForms -->
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<UseWindowsForms>true</UseWindowsForms>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
-  <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <Nullable>enable</Nullable>
-    <UseWindowsForms>true</UseWindowsForms>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-  </PropertyGroup>
+		<!-- NuGet metadata -->
+		<PackageId>Leekz.CodeTextBox</PackageId>
+		<Version>1.0.0</Version>
+		<Authors>PIN0L33KZ</Authors>
+		<Company>PIN0L33KZ Gbr</Company>
+		<Product>Leekz Code TextBox</Product>
 
+		<Description>WinForms code editor control with line numbers, zoom and change markers.</Description>
+		<PackageTags>winforms;editor;code;text;linenumbers</PackageTags>
+
+		<!-- Optional but nice -->
+		<RepositoryUrl>https://github.com/PIN0L33KZ/LeekzCodeTextBox</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+
+		<!-- Build will automatically create a .nupkg -->
+		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+
+		<!-- Keine Lizenzabfrage im NuGet-Dialog -->
+		<PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+	</PropertyGroup>
 </Project>
