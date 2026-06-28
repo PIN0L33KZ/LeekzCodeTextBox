@@ -593,12 +593,20 @@ public partial class LeekzCodeTextBox : UserControl
 
         if(RTB_Text.IsHandleCreated)
         {
-            _ = SendMessage(RTB_Text.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+            _ = SendMessage(
+                RTB_Text.Handle,
+                WM_SETREDRAW,
+                IntPtr.Zero,
+                IntPtr.Zero);
         }
 
         if(PNL_LineNumber.IsHandleCreated)
         {
-            _ = SendMessage(PNL_LineNumber.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+            _ = SendMessage(
+                PNL_LineNumber.Handle,
+                WM_SETREDRAW,
+                IntPtr.Zero,
+                IntPtr.Zero);
         }
     }
 
@@ -618,12 +626,20 @@ public partial class LeekzCodeTextBox : UserControl
 
         if(RTB_Text.IsHandleCreated)
         {
-            _ = SendMessage(RTB_Text.Handle, WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+            _ = SendMessage(
+                RTB_Text.Handle,
+                WM_SETREDRAW,
+                new IntPtr(1),
+                IntPtr.Zero);
         }
 
         if(PNL_LineNumber.IsHandleCreated)
         {
-            _ = SendMessage(PNL_LineNumber.Handle, WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+            _ = SendMessage(
+                PNL_LineNumber.Handle,
+                WM_SETREDRAW,
+                new IntPtr(1),
+                IntPtr.Zero);
         }
 
         RTB_Text.Invalidate();
@@ -718,10 +734,10 @@ public partial class LeekzCodeTextBox : UserControl
         var linesToScroll = direction * linesPerNotch;
 
         _ = SendMessage(
-            RTB_Text.Handle,
-            EM_LINESCROLL,
-            IntPtr.Zero,
-            linesToScroll);
+    RTB_Text.Handle,
+    EM_LINESCROLL,
+    IntPtr.Zero,
+    new IntPtr(linesToScroll));
 
         PNL_LineNumber.Invalidate();
     }

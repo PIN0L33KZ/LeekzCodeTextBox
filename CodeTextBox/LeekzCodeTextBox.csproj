@@ -16,6 +16,9 @@
 		<Product>LeekzCodeTextBox</Product>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 
+		<PackageReleaseNotes>
+			Added RichTextBox selection/highlighting wrapper API, improved redraw performance, and fixed C# 10 compatibility.
+		</PackageReleaseNotes>
 		<Description>WinForms code editor control with line numbers, zoom and change markers.</Description>
 		<PackageTags>winforms;editor;code;text;linenumbers;textbox;leekz;l33kz;pinoleekz;pin0l33kz</PackageTags>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
