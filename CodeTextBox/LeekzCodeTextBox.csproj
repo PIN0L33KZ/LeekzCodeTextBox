@@ -1,23 +1,27 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
 	<PropertyGroup>
 		<!-- Target framework and WinForms -->
-		<TargetFramework>net10.0-windows</TargetFramework>
+		<TargetFrameworks>net10.0-windows;net8.0-windows;net6.0-windows</TargetFrameworks>
+		<LangVersion>10.0</LangVersion>
 		<UseWindowsForms>true</UseWindowsForms>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
 		<!-- NuGet metadata -->
-		<PackageId>LeekzCodeTextBox</PackageId>
-		<Version>1.0.0</Version>
+		<PackageId>Leekz.CodeTextBox</PackageId>
+		<Version>1.0.1</Version>
 		<Authors>PIN0L33KZ</Authors>
-		<Company>PIN0L33KZ Gbr</Company>
+		<Company>PIN0L33KZ GbR</Company>
 		<Product>LeekzCodeTextBox</Product>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 
 		<Description>WinForms code editor control with line numbers, zoom and change markers.</Description>
-		<PackageTags>winforms;editor;code;text;linenumbers</PackageTags>
+		<PackageTags>winforms;editor;code;text;linenumbers;textbox;leekz;l33kz;pinoleekz;pin0l33kz</PackageTags>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
 
 		<!-- Optional but nice -->
+		<PackageProjectUrl>https://www.pinoleekz.de</PackageProjectUrl>
 		<RepositoryUrl>https://github.com/PIN0L33KZ/LeekzCodeTextBox</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>
 

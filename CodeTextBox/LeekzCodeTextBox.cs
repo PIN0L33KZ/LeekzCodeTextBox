@@ -3,721 +3,910 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
-namespace CodeTextBox
+namespace CodeTextBox;
+
+public partial class LeekzCodeTextBox : UserControl
 {
-    public partial class LeekzCodeTextBox : UserControl
+    private const int EM_LINESCROLL = 0x00B6;
+    private const int WM_SETREDRAW = 0x000B;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    public enum LineNumberDockSide
     {
-        private const int EM_LINESCROLL = 0x00B6;
+        Left,
+        Right
+    }
 
-        // P/Invoke for scrolling the RichTextBox by logical lines.
-        [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
-        private static partial IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+    private string[] _savedLines = Array.Empty<string>();
+    private bool _hasSavedSnapshot;
 
-        public enum LineNumberDockSide
+    private Color _lineNumberForeColor = Color.Gray;
+    private Color _lineNumberSeparatorColor = Color.Silver;
+    private int _lineNumberSeparatorWidth = 4;
+    private LineNumberDockSide _lineNumberDock = LineNumberDockSide.Left;
+    private float _minZoomFactor = 0.5f;
+    private float _maxZoomFactor = 5.0f;
+
+    private int _redrawSuspendCount;
+
+    public LeekzCodeTextBox()
+    {
+        InitializeComponent();
+
+        SetStyle(
+            ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.UserPaint |
+            ControlStyles.OptimizedDoubleBuffer,
+            true);
+
+        UpdateStyles();
+
+        EnableDoubleBuffering(PNL_LineNumber);
+        EnableDoubleBuffering(RTB_Text);
+
+        RTB_Text.HideSelection = false;
+
+        PNL_LineNumber.Paint += PNL_LineNumber_Paint;
+
+        InitEvents();
+
+        RTB_Text.MouseWheel += RTB_Text_MouseWheel;
+        PNL_LineNumber.MouseWheel += PNL_LineNumber_MouseWheel;
+
+        ApplyLineNumberDock();
+    }
+
+    private static void EnableDoubleBuffering(Control? control)
+    {
+        if(control == null)
         {
-            Left,
-            Right
+            return;
         }
 
-        // Snapshot of lines at the moment MarkAsSaved() was last called.
-        private string[] _savedLines = [];
+        PropertyInfo? doubleBufferProperty =
+            control.GetType().GetProperty(
+                "DoubleBuffered",
+                BindingFlags.Instance | BindingFlags.NonPublic);
 
-        // True once MarkAsSaved() was called at least once.
-        private bool _hasSavedSnapshot;
+        doubleBufferProperty?.SetValue(control, true, null);
+    }
 
-        public LeekzCodeTextBox()
+    private void InitEvents()
+    {
+        RTB_Text.VScroll += RTB_Text_VScroll;
+        RTB_Text.TextChanged += RTB_Text_TextChanged;
+        RTB_Text.Resize += RTB_Text_Resize;
+        RTB_Text.FontChanged += RTB_Text_FontChanged;
+    }
+
+    private void RTB_Text_VScroll(object? sender, EventArgs e)
+    {
+        PNL_LineNumber.Invalidate();
+    }
+
+    private void RTB_Text_Resize(object? sender, EventArgs e)
+    {
+        PNL_LineNumber.Invalidate();
+    }
+
+    private void RTB_Text_FontChanged(object? sender, EventArgs e)
+    {
+        SyncLineNumberFontFromText();
+    }
+
+    // ---------------------------------------------------------
+    //  Public API – save / change tracking
+    // ---------------------------------------------------------
+
+    public void MarkAsSaved()
+    {
+        var lines = RTB_Text.Lines;
+
+        _savedLines = new string[lines.Length];
+
+        Array.Copy(lines, _savedLines, lines.Length);
+
+        _hasSavedSnapshot = true;
+
+        PNL_LineNumber.Invalidate();
+    }
+
+    public bool IsSaved()
+    {
+        if(!_hasSavedSnapshot)
         {
-            InitializeComponent();
+            return false;
+        }
 
-            // Enable double buffering on the UserControl itself.
-            SetStyle(
-                ControlStyles.AllPaintingInWmPaint |
-                ControlStyles.UserPaint |
-                ControlStyles.OptimizedDoubleBuffer,
-                true);
-            UpdateStyles();
+        var currentLines = RTB_Text.Lines;
 
-            // Enable double buffering on inner controls (panel + RichTextBox).
-            EnableDoubleBuffering(PNL_LineNumber);
-            EnableDoubleBuffering(RTB_Text);
+        if(currentLines.Length != _savedLines.Length)
+        {
+            return false;
+        }
 
-            // Paint handler for the line number panel.
-            PNL_LineNumber.Paint += PNL_LineNumber_Paint;
+        for(var i = 0; i < currentLines.Length; i++)
+        {
+            if(!string.Equals(currentLines[i], _savedLines[i], StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
 
-            // Events for the code area.
-            InitEvents();
+        return true;
+    }
 
-            // Mouse wheel handling (zoom / scroll).
-            RTB_Text.MouseWheel += RTB_Text_MouseWheel;
-            PNL_LineNumber.MouseWheel += PNL_LineNumber_MouseWheel;
+    // ---------------------------------------------------------
+    //  Hide inherited visual properties on the UserControl
+    // ---------------------------------------------------------
 
-            // Do NOT grab focus in the line number panel (keeps selection in RTB_Text).
-            // PNL_LineNumber.MouseEnter += (s, e) => PNL_LineNumber.Focus();
+    [Browsable(false)]
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public new Color BackColor
+    {
+        get => base.BackColor;
+        set => base.BackColor = value;
+    }
 
-            // Apply initial docking based on property.
+    [Browsable(false)]
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public new Color ForeColor
+    {
+        get => base.ForeColor;
+        set => base.ForeColor = value;
+    }
+
+    [Browsable(false)]
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public new Image? BackgroundImage
+    {
+        get => base.BackgroundImage;
+        set => base.BackgroundImage = value;
+    }
+
+    [Browsable(false)]
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public new ImageLayout BackgroundImageLayout
+    {
+        get => base.BackgroundImageLayout;
+        set => base.BackgroundImageLayout = value;
+    }
+
+    [Browsable(false)]
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public new Font Font
+    {
+        get => base.Font;
+        set => base.Font = value;
+    }
+
+    // ---------------------------------------------------------
+    //  Public properties – code area
+    // ---------------------------------------------------------
+
+    [Category("Code")]
+    [Description("Background colour of the code area.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public Color CodeBackColor
+    {
+        get => RTB_Text.BackColor;
+        set => RTB_Text.BackColor = value;
+    }
+
+    [Category("Code")]
+    [Description("Text colour of the code area.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public Color CodeForeColor
+    {
+        get => RTB_Text.ForeColor;
+        set => RTB_Text.ForeColor = value;
+    }
+
+    [Category("Code")]
+    [Description("Font used for the code area.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public Font CodeFont
+    {
+        get => RTB_Text.Font;
+        set
+        {
+            if(value == null)
+            {
+                return;
+            }
+
+            RTB_Text.Font = value;
+            SyncLineNumberFontFromText();
+        }
+    }
+
+    [Category("Code")]
+    [Description("Enables or disables word wrapping in the code area.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public bool CodeWordWrap
+    {
+        get => RTB_Text.WordWrap;
+        set
+        {
+            if(RTB_Text.WordWrap == value)
+            {
+                return;
+            }
+
+            RTB_Text.WordWrap = value;
+            PNL_LineNumber.Invalidate();
+        }
+    }
+
+    // ---------------------------------------------------------
+    //  Public properties – line numbers
+    // ---------------------------------------------------------
+
+    [Category("Line Numbers")]
+    [Description("Background colour of the line number panel.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public Color LineNumberBackColor
+    {
+        get => PNL_LineNumber.BackColor;
+        set
+        {
+            PNL_LineNumber.BackColor = value;
+            PNL_LineNumber.Invalidate();
+        }
+    }
+
+    [Category("Line Numbers")]
+    [Description("Text colour of the line numbers.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public Color LineNumberForeColor
+    {
+        get => _lineNumberForeColor;
+        set
+        {
+            if(_lineNumberForeColor == value)
+            {
+                return;
+            }
+
+            _lineNumberForeColor = value;
+            PNL_LineNumber.Invalidate();
+        }
+    }
+
+    [Category("Line Numbers")]
+    [Description("Font used to draw the line numbers.")]
+    [Browsable(false)]
+    public Font? LineNumberFont { get; private set; }
+
+    [Category("Line Numbers")]
+    [Description("Colour of the separator line between line numbers and code.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public Color LineNumberSeperatorColor
+    {
+        get => _lineNumberSeparatorColor;
+        set
+        {
+            if(_lineNumberSeparatorColor == value)
+            {
+                return;
+            }
+
+            _lineNumberSeparatorColor = value;
+            PNL_LineNumber.Invalidate();
+        }
+    }
+
+    [Category("Line Numbers")]
+    [Description("Colour of separator segments when a line has changed since it was last saved.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public Color LineNumberChangedColor { get; set; } = Color.Red;
+
+    [Category("Line Numbers")]
+    [Description("Width of the separator line between line numbers and code in pixels.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public int LineNumberSeperatorWith
+    {
+        get => _lineNumberSeparatorWidth;
+        set
+        {
+            var safeValue = value < 1 ? 1 : value;
+
+            if(_lineNumberSeparatorWidth == safeValue)
+            {
+                return;
+            }
+
+            _lineNumberSeparatorWidth = safeValue;
+            PNL_LineNumber.Invalidate();
+        }
+    }
+
+    [Category("Line Numbers")]
+    [Description("Dock position of the line number panel.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public LineNumberDockSide LineNumberDock
+    {
+        get => _lineNumberDock;
+        set
+        {
+            if(_lineNumberDock == value)
+            {
+                return;
+            }
+
+            _lineNumberDock = value;
             ApplyLineNumberDock();
+            PNL_LineNumber.Invalidate();
         }
+    }
 
-        /// <summary>
-        /// Enables double buffering on a control that does not expose the property publicly.
-        /// </summary>
-        private static void EnableDoubleBuffering(Control? control)
+    private void ApplyLineNumberDock()
+    {
+        if(LineNumberDock == LineNumberDockSide.Left)
         {
-            if(control == null)
+            PNL_LineNumber.Dock = DockStyle.Left;
+            RTB_Text.Dock = DockStyle.Fill;
+        }
+        else
+        {
+            PNL_LineNumber.Dock = DockStyle.Right;
+            RTB_Text.Dock = DockStyle.Fill;
+        }
+    }
+
+    // ---------------------------------------------------------
+    //  Public properties – zoom / text
+    // ---------------------------------------------------------
+
+    [Category("Behaviour")]
+    [Description("Minimum zoom factor.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public float MinZoomFactor
+    {
+        get => _minZoomFactor;
+        set
+        {
+            var safeValue = Math.Max(0.1f, value);
+
+            if(safeValue > MaxZoomFactor)
+            {
+                safeValue = MaxZoomFactor;
+            }
+
+            if(Math.Abs(_minZoomFactor - safeValue) < float.Epsilon)
             {
                 return;
             }
 
-            PropertyInfo? doubleBufferProperty =
-                control.GetType().GetProperty(
-                    "DoubleBuffered",
-                    BindingFlags.Instance | BindingFlags.NonPublic);
+            _minZoomFactor = safeValue;
 
-            doubleBufferProperty?.SetValue(control, true, null);
-        }
-
-        private void InitEvents()
-        {
-            // Redraw line numbers whenever the text area changes visually.
-            RTB_Text.VScroll += (_, _) => PNL_LineNumber.Invalidate();
-            RTB_Text.TextChanged += RTB_Text_TextChanged;
-            RTB_Text.Resize += (_, _) => PNL_LineNumber.Invalidate();
-            RTB_Text.FontChanged += (_, _) => SyncLineNumberFontFromText();
-        }
-
-        // ---------------------------------------------------------
-        //  Public API – save / change tracking
-        // ---------------------------------------------------------
-
-        /// <summary>
-        /// Marks the current text as saved.
-        /// The current lines are stored as the baseline for future comparisons.
-        /// </summary>
-        public void MarkAsSaved()
-        {
-            string[] lines = RTB_Text.Lines;
-            _savedLines = new string[lines.Length];
-            Array.Copy(lines, _savedLines, lines.Length);
-
-            _hasSavedSnapshot = true;
-
-            PNL_LineNumber.Invalidate();
-        }
-
-        /// <summary>
-        /// Returns true if there is a saved snapshot and all lines are identical to it.
-        /// This method performs a full comparison only when called.
-        /// </summary>
-        public bool IsSaved()
-        {
-            if(!_hasSavedSnapshot)
+            if(ZoomFactor < _minZoomFactor)
             {
-                return false;
-            }
-
-            string[] currentLines = RTB_Text.Lines;
-
-            if(currentLines.Length != _savedLines.Length)
-            {
-                return false;
-            }
-
-            for(int i = 0; i < currentLines.Length; i++)
-            {
-                if(!string.Equals(currentLines[i], _savedLines[i], StringComparison.Ordinal))
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        // ---------------------------------------------------------
-        //  Hide inherited visual properties on the UserControl
-        //  (use 'new' instead of 'override' to avoid nullability warnings)
-        // ---------------------------------------------------------
-
-        [Browsable(false)]
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public new Color BackColor
-        {
-            get => base.BackColor;
-            set => base.BackColor = value;
-        }
-
-        [Browsable(false)]
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public new Color ForeColor
-        {
-            get => base.ForeColor;
-            set => base.ForeColor = value;
-        }
-
-        [Browsable(false)]
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public new Image? BackgroundImage
-        {
-            get => base.BackgroundImage;
-            set => base.BackgroundImage = value;
-        }
-
-        [Browsable(false)]
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public new ImageLayout BackgroundImageLayout
-        {
-            get => base.BackgroundImageLayout;
-            set => base.BackgroundImageLayout = value;
-        }
-
-        [Browsable(false)]
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public new Font Font
-        {
-            get => base.Font;
-            set => base.Font = value;
-        }
-
-        // ---------------------------------------------------------
-        //  Public properties – code area
-        // ---------------------------------------------------------
-
-        [Category("Code")]
-        [Description("Background colour of the code area (RichTextBox).")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public Color CodeBackColor
-        {
-            get => RTB_Text.BackColor;
-            set => RTB_Text.BackColor = value;
-        }
-
-        [Category("Code")]
-        [Description("Text colour of the code (RichTextBox).")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public Color CodeForeColor
-        {
-            get => RTB_Text.ForeColor;
-            set => RTB_Text.ForeColor = value;
-        }
-
-        [Category("Code")]
-        [Description("Font used for the code (RichTextBox).")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public Font CodeFont
-        {
-            get => RTB_Text.Font;
-            set
-            {
-                if(value == null)
-                {
-                    return;
-                }
-
-                RTB_Text.Font = value;
-                SyncLineNumberFontFromText();
+                ZoomFactor = _minZoomFactor;
             }
         }
+    }
 
-        [Category("Code")]
-        [Description("Enables or disables word wrapping in the code area.")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public bool CodeWordWrap
+    [Category("Behaviour")]
+    [Description("Maximum zoom factor.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public float MaxZoomFactor
+    {
+        get => _maxZoomFactor;
+        set
         {
-            get => RTB_Text.WordWrap;
-            set
+            var safeValue = Math.Min(64f, value);
+
+            if(safeValue < MinZoomFactor)
             {
-                if(RTB_Text.WordWrap == value)
-                {
-                    return;
-                }
-
-                RTB_Text.WordWrap = value;
-                PNL_LineNumber.Invalidate();
+                safeValue = MinZoomFactor;
             }
-        }
 
-        // ---------------------------------------------------------
-        //  Public properties – line numbers
-        // ---------------------------------------------------------
-
-        [Category("Line Numbers")]
-        [Description("Background colour of the line number panel.")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public Color LineNumberBackColor
-        {
-            get => PNL_LineNumber.BackColor;
-            set
-            {
-                PNL_LineNumber.BackColor = value;
-                PNL_LineNumber.Invalidate();
-            }
-        }
-
-        [Category("Line Numbers")]
-        [Description("Text colour of the line numbers.")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public Color LineNumberForeColor
-        {
-            get;
-            set
-            {
-                field = value;
-                PNL_LineNumber.Invalidate();
-            }
-        } = Color.Gray;
-
-        [Category("Line Numbers")]
-        [Description("Font used to draw the line numbers (always Arial; size is derived from the code font).")]
-        [Browsable(false)] // read-only in designer
-        public Font? LineNumberFont { get; private set; }
-
-        [Category("Line Numbers")]
-        [Description("Colour of the separator line between line numbers and code.")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public Color LineNumberSeperatorColor
-        {
-            get;
-            set
-            {
-                field = value;
-                PNL_LineNumber.Invalidate();
-            }
-        } = Color.Silver;
-
-        [Category("Line Numbers")]
-        [Description("Colour of separator segments when a line has changed since it was last saved.")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public Color LineNumberChangedColor { get; set; } = Color.Red;
-
-        [Category("Line Numbers")]
-        [Description("Width of the separator line between line numbers and code (in pixels).")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public int LineNumberSeperatorWith
-        {
-            get;
-            set
-            {
-                int v = value;
-                if(v < 1)
-                {
-                    v = 1;
-                }
-
-                field = v;
-                PNL_LineNumber.Invalidate();
-            }
-        } = 4;
-
-        [Category("Line Numbers")]
-        [Description("Dock position of the line number panel (left or right of the code area).")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public LineNumberDockSide LineNumberDock
-        {
-            get;
-            set
-            {
-                if(field == value)
-                {
-                    return;
-                }
-
-                field = value;
-                ApplyLineNumberDock();
-                PNL_LineNumber.Invalidate();
-            }
-        } = LineNumberDockSide.Left;
-
-        private void ApplyLineNumberDock()
-        {
-            if(LineNumberDock == LineNumberDockSide.Left)
-            {
-                PNL_LineNumber.Dock = DockStyle.Left;
-                RTB_Text.Dock = DockStyle.Fill;
-            }
-            else
-            {
-                PNL_LineNumber.Dock = DockStyle.Right;
-                RTB_Text.Dock = DockStyle.Fill;
-            }
-        }
-
-        // ---------------------------------------------------------
-        //  Public properties – zoom / text
-        // ---------------------------------------------------------
-
-        [Category("Behaviour")]
-        [Description("Minimum zoom factor (>= 0.1 and <= MaxZoomFactor).")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public float MinZoomFactor
-        {
-            get;
-            set
-            {
-                float v = Math.Max(0.1f, value);
-                if(v > MaxZoomFactor)
-                {
-                    v = MaxZoomFactor;
-                }
-
-                field = v;
-
-                if(ZoomFactor < field)
-                {
-                    ZoomFactor = field;
-                }
-            }
-        } = 0.5f;
-
-        [Category("Behaviour")]
-        [Description("Maximum zoom factor (<= 64 and >= MinZoomFactor).")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public float MaxZoomFactor
-        {
-            get;
-            set
-            {
-                float v = Math.Min(64f, value);
-                if(v < MinZoomFactor)
-                {
-                    v = MinZoomFactor;
-                }
-
-                field = v;
-
-                if(ZoomFactor > field)
-                {
-                    ZoomFactor = field;
-                }
-            }
-        } = 5.0f;
-
-        [Category("Behaviour")]
-        [Description("Current zoom factor (1.0 = 100%). Affects both code and line numbers.")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        public float ZoomFactor
-        {
-            get => RTB_Text.ZoomFactor;
-            set
-            {
-                float v = value;
-
-                if(v < MinZoomFactor)
-                {
-                    v = MinZoomFactor;
-                }
-
-                if(v > MaxZoomFactor)
-                {
-                    v = MaxZoomFactor;
-                }
-
-                // Safety net for RichTextBox limits.
-                if(v < 0.1f)
-                {
-                    v = 0.1f;
-                }
-
-                if(v > 64f)
-                {
-                    v = 64f;
-                }
-
-                RTB_Text.ZoomFactor = v;
-                PNL_LineNumber.Invalidate();
-            }
-        }
-
-        [Category("Data")]
-        [Description("Text content of the code editor.")]
-        [Browsable(true)]
-        [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
-        [AllowNull]
-        public override string Text
-        {
-            get => RTB_Text.Text;
-            set => RTB_Text.Text = value ?? string.Empty;
-        }
-
-        // ---------------------------------------------------------
-        //  TextChanged – lightweight: repaint line numbers only
-        // ---------------------------------------------------------
-
-        private void RTB_Text_TextChanged(object? sender, EventArgs e)
-        {
-            // No full diff here – just trigger a repaint of line numbers and change markers.
-            PNL_LineNumber.Invalidate();
-        }
-
-        // ---------------------------------------------------------
-        //  Mouse wheel handling
-        // ---------------------------------------------------------
-
-        private void RTB_Text_MouseWheel(object? sender, MouseEventArgs e)
-        {
-            if((ModifierKeys & Keys.Control) == Keys.Control)
-            {
-                // RichTextBox handles the zoom internally – we just redraw the line numbers.
-                PNL_LineNumber.Invalidate();
-            }
-        }
-
-        private void PNL_LineNumber_MouseWheel(object? sender, MouseEventArgs e)
-        {
-            if((ModifierKeys & Keys.Control) == Keys.Control)
-            {
-                HandleZoomFromMouseWheel(e);
-            }
-            else
-            {
-                HandleScrollFromMouseWheel(e);
-            }
-        }
-
-        private void HandleZoomFromMouseWheel(MouseEventArgs e)
-        {
-            const float step = 0.1f;
-
-            if(e.Delta > 0)
-            {
-                ZoomFactor += step;
-            }
-            else
-            {
-                ZoomFactor -= step;
-            }
-        }
-
-        private void HandleScrollFromMouseWheel(MouseEventArgs e)
-        {
-            int linesPerNotch = SystemInformation.MouseWheelScrollLines;
-
-            if(linesPerNotch <= 0)
+            if(Math.Abs(_maxZoomFactor - safeValue) < float.Epsilon)
             {
                 return;
             }
 
-            int direction = e.Delta > 0 ? -1 : 1;
-            int linesToScroll = direction * linesPerNotch;
+            _maxZoomFactor = safeValue;
 
-            _ = SendMessage(
-                RTB_Text.Handle,
-                EM_LINESCROLL,
-                IntPtr.Zero,
-                (IntPtr)linesToScroll);
+            if(ZoomFactor > _maxZoomFactor)
+            {
+                ZoomFactor = _maxZoomFactor;
+            }
+        }
+    }
 
-            // We *could* skip this Invalidate and rely only on RTB_Text.VScroll,
-            // but keeping it here guarantees the panel updates even if the scroll
-            // message does not raise VScroll for some reason.
+    [Category("Behaviour")]
+    [Description("Current zoom factor. 1.0 equals 100 percent.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    public float ZoomFactor
+    {
+        get => RTB_Text.ZoomFactor;
+        set
+        {
+            var safeValue = value;
+
+            if(safeValue < MinZoomFactor)
+            {
+                safeValue = MinZoomFactor;
+            }
+
+            if(safeValue > MaxZoomFactor)
+            {
+                safeValue = MaxZoomFactor;
+            }
+
+            if(safeValue < 0.1f)
+            {
+                safeValue = 0.1f;
+            }
+
+            if(safeValue > 64f)
+            {
+                safeValue = 64f;
+            }
+
+            RTB_Text.ZoomFactor = safeValue;
             PNL_LineNumber.Invalidate();
         }
+    }
 
-        // ---------------------------------------------------------
-        //  Drawing line numbers
-        // ---------------------------------------------------------
+    [Category("Data")]
+    [Description("Text content of the code editor.")]
+    [Browsable(true)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)]
+    [AllowNull]
+    public override string Text
+    {
+        get => RTB_Text.Text;
+        set => RTB_Text.Text = value ?? string.Empty;
+    }
 
-        /// <summary>
-        /// Creates or updates the line number font based on the code font
-        /// without triggering a repaint.
-        /// </summary>
-        private void RecreateLineNumberFont()
+    // ---------------------------------------------------------
+    //  Public API – selection / highlighting / caret
+    // ---------------------------------------------------------
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public int TextLength => RTB_Text.TextLength;
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public int SelectionStart
+    {
+        get => RTB_Text.SelectionStart;
+        set => RTB_Text.SelectionStart = ClampTextIndex(value);
+    }
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public int SelectionLength
+    {
+        get => RTB_Text.SelectionLength;
+        set => RTB_Text.SelectionLength = ClampSelectionLength(RTB_Text.SelectionStart, value);
+    }
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public Color SelectionBackColor
+    {
+        get => RTB_Text.SelectionBackColor;
+        set => RTB_Text.SelectionBackColor = value;
+    }
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public string SelectedText
+    {
+        get => RTB_Text.SelectedText;
+        set => RTB_Text.SelectedText = value ?? string.Empty;
+    }
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public bool HideSelection
+    {
+        get => RTB_Text.HideSelection;
+        set => RTB_Text.HideSelection = value;
+    }
+
+    public new void Select()
+    {
+        RTB_Text.Select();
+    }
+
+    public void Select(int start, int length)
+    {
+        var safeStart = ClampTextIndex(start);
+        var safeLength = ClampSelectionLength(safeStart, length);
+
+        RTB_Text.Select(safeStart, safeLength);
+    }
+
+    public void SetSelectionBackColor(int start, int length, Color color)
+    {
+        var safeStart = ClampTextIndex(start);
+        var safeLength = ClampSelectionLength(safeStart, length);
+
+        if(safeLength <= 0)
         {
-            Font textFont = RTB_Text.Font;
-            float size = Math.Max(1f, textFont.Size - 1f); // never smaller than 1
-
-            LineNumberFont?.Dispose();
-            LineNumberFont = new Font("Arial", size, textFont.Style);
+            return;
         }
 
-        private void SyncLineNumberFontFromText()
+        RTB_Text.Select(safeStart, safeLength);
+        RTB_Text.SelectionBackColor = color;
+    }
+
+    public void ResetSelectionBackColor(int start, int length)
+    {
+        var safeStart = ClampTextIndex(start);
+        var safeLength = ClampSelectionLength(safeStart, length);
+
+        if(safeLength <= 0)
+        {
+            return;
+        }
+
+        RTB_Text.Select(safeStart, safeLength);
+        RTB_Text.SelectionBackColor = RTB_Text.BackColor;
+    }
+
+    public void ScrollToCaret()
+    {
+        RTB_Text.ScrollToCaret();
+        PNL_LineNumber.Invalidate();
+    }
+
+    public bool FocusCodeArea()
+    {
+        return RTB_Text.Focus();
+    }
+
+    public void BeginUpdate()
+    {
+        _redrawSuspendCount++;
+
+        if(_redrawSuspendCount > 1)
+        {
+            return;
+        }
+
+        if(RTB_Text.IsHandleCreated)
+        {
+            _ = SendMessage(RTB_Text.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        if(PNL_LineNumber.IsHandleCreated)
+        {
+            _ = SendMessage(PNL_LineNumber.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+        }
+    }
+
+    public void EndUpdate()
+    {
+        if(_redrawSuspendCount <= 0)
+        {
+            return;
+        }
+
+        _redrawSuspendCount--;
+
+        if(_redrawSuspendCount > 0)
+        {
+            return;
+        }
+
+        if(RTB_Text.IsHandleCreated)
+        {
+            _ = SendMessage(RTB_Text.Handle, WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+        }
+
+        if(PNL_LineNumber.IsHandleCreated)
+        {
+            _ = SendMessage(PNL_LineNumber.Handle, WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+        }
+
+        RTB_Text.Invalidate();
+        PNL_LineNumber.Invalidate();
+        Invalidate();
+    }
+
+    protected override void OnEnter(EventArgs e)
+    {
+        base.OnEnter(e);
+
+        if(!RTB_Text.Focused)
+        {
+            _ = RTB_Text.Focus();
+        }
+    }
+
+    private int ClampTextIndex(int index)
+    {
+        return index < 0 ? 0 : index > RTB_Text.TextLength ? RTB_Text.TextLength : index;
+    }
+
+    private int ClampSelectionLength(int start, int length)
+    {
+        if(length < 0)
+        {
+            return 0;
+        }
+
+        var availableLength = RTB_Text.TextLength - start;
+
+        return length > availableLength ? availableLength : length;
+    }
+
+    // ---------------------------------------------------------
+    //  TextChanged
+    // ---------------------------------------------------------
+
+    private void RTB_Text_TextChanged(object? sender, EventArgs e)
+    {
+        PNL_LineNumber.Invalidate();
+    }
+
+    // ---------------------------------------------------------
+    //  Mouse wheel handling
+    // ---------------------------------------------------------
+
+    private void RTB_Text_MouseWheel(object? sender, MouseEventArgs e)
+    {
+        if((ModifierKeys & Keys.Control) == Keys.Control)
+        {
+            PNL_LineNumber.Invalidate();
+        }
+    }
+
+    private void PNL_LineNumber_MouseWheel(object? sender, MouseEventArgs e)
+    {
+        if((ModifierKeys & Keys.Control) == Keys.Control)
+        {
+            HandleZoomFromMouseWheel(e);
+        }
+        else
+        {
+            HandleScrollFromMouseWheel(e);
+        }
+    }
+
+    private void HandleZoomFromMouseWheel(MouseEventArgs e)
+    {
+        const float step = 0.1f;
+
+        if(e.Delta > 0)
+        {
+            ZoomFactor += step;
+        }
+        else
+        {
+            ZoomFactor -= step;
+        }
+    }
+
+    private void HandleScrollFromMouseWheel(MouseEventArgs e)
+    {
+        var linesPerNotch = SystemInformation.MouseWheelScrollLines;
+
+        if(linesPerNotch <= 0)
+        {
+            return;
+        }
+
+        var direction = e.Delta > 0 ? -1 : 1;
+        var linesToScroll = direction * linesPerNotch;
+
+        _ = SendMessage(
+            RTB_Text.Handle,
+            EM_LINESCROLL,
+            IntPtr.Zero,
+            linesToScroll);
+
+        PNL_LineNumber.Invalidate();
+    }
+
+    // ---------------------------------------------------------
+    //  Drawing line numbers
+    // ---------------------------------------------------------
+
+    private void RecreateLineNumberFont()
+    {
+        Font textFont = RTB_Text.Font;
+        var size = Math.Max(1f, textFont.Size - 1f);
+
+        LineNumberFont?.Dispose();
+        LineNumberFont = new Font("Arial", size, textFont.Style);
+    }
+
+    private void SyncLineNumberFontFromText()
+    {
+        RecreateLineNumberFont();
+        PNL_LineNumber.Invalidate();
+    }
+
+    private void PNL_LineNumber_Paint(object? sender, PaintEventArgs e)
+    {
+        e.Graphics.Clear(LineNumberBackColor);
+
+        var lines = RTB_Text.Lines;
+
+        if(lines.Length == 0)
+        {
+            DrawSeparator(e);
+            return;
+        }
+
+        if(LineNumberFont == null)
         {
             RecreateLineNumberFont();
-            PNL_LineNumber.Invalidate();
         }
 
-        private void PNL_LineNumber_Paint(object? sender, PaintEventArgs e)
+        Font baseFont = LineNumberFont;
+
+        DrawSeparator(e);
+
+        var zoom = RTB_Text.ZoomFactor;
+
+        using Font lineNumberFont = new(
+            baseFont.FontFamily,
+            baseFont.Size * zoom,
+            baseFont.Style);
+
+        using SolidBrush brush = new(LineNumberForeColor);
+
+        var separatorWidth = LineNumberSeperatorWith <= 0 ? 1 : LineNumberSeperatorWith;
+        var halfWidth = separatorWidth / 2;
+
+        var separatorX = LineNumberDock == LineNumberDockSide.Left
+            ? PNL_LineNumber.Width - halfWidth - 1
+            : halfWidth;
+
+        using Pen changedPen = new(LineNumberChangedColor, separatorWidth);
+
+        var firstCharIndex = RTB_Text.GetCharIndexFromPosition(new Point(0, 0));
+        var firstLine = RTB_Text.GetLineFromCharIndex(firstCharIndex);
+
+        if(firstLine < 0)
         {
-            e.Graphics.Clear(LineNumberBackColor);
-
-            string[] lines = RTB_Text.Lines;
-            if(lines.Length == 0)
-            {
-                DrawSeparator(e);
-                return;
-            }
-
-            if(LineNumberFont == null)
-            {
-                // Avoid calling SyncLineNumberFontFromText() here to prevent recursive invalidation.
-                RecreateLineNumberFont();
-            }
-
-            Font baseFont = LineNumberFont!;
-
-            // Draw base separator line over the full height.
-            DrawSeparator(e);
-
-            // Apply zoom to the line number font.
-            float zoom = RTB_Text.ZoomFactor;
-            using Font lnFont = new(
-                baseFont.FontFamily,
-                baseFont.Size * zoom,
-                baseFont.Style);
-
-            using SolidBrush brush = new(LineNumberForeColor);
-
-            int sepWidth = LineNumberSeperatorWith <= 0 ? 1 : LineNumberSeperatorWith;
-            int halfWidth = sepWidth / 2;
-
-            // X position of the separator line (centre of the line).
-            int separatorX = LineNumberDock == LineNumberDockSide.Left
-                ? PNL_LineNumber.Width - halfWidth - 1
-                : halfWidth;
-
-            using Pen changedPen = new(LineNumberChangedColor, sepWidth);
-
-            // First visible logical line index.
-            int firstCharIndex = RTB_Text.GetCharIndexFromPosition(new Point(0, 0));
-            int firstLine = RTB_Text.GetLineFromCharIndex(firstCharIndex);
-            if(firstLine < 0)
-            {
-                firstLine = 0;
-            }
-
-            int lastLogicalLine = lines.Length - 1;
-            float maxNumberWidth = 0f;
-            int panelHeight = PNL_LineNumber.Height;
-
-            for(int line = firstLine; line <= lastLogicalLine; line++)
-            {
-                int charIndex;
-
-                // For the first visible line, use the character at the top of the control
-                // (important for wrapped lines). For all other lines, use the logical line start.
-                if(line == firstLine)
-                {
-                    charIndex = firstCharIndex;
-                }
-                else
-                {
-                    charIndex = RTB_Text.GetFirstCharIndexFromLine(line);
-                    if(charIndex < 0)
-                    {
-                        continue;
-                    }
-                }
-
-                Point pos = RTB_Text.GetPositionFromCharIndex(charIndex);
-                float y = pos.Y;
-
-                // Stop once we are below the visible area – only visible lines are processed.
-                if(y > panelHeight)
-                {
-                    break;
-                }
-
-                string lineNumberText = (line + 1).ToString();
-
-                SizeF size = e.Graphics.MeasureString(lineNumberText, lnFont);
-                if(size.Width > maxNumberWidth)
-                {
-                    maxNumberWidth = size.Width;
-                }
-
-                float x = LineNumberDock == LineNumberDockSide.Left
-                    ? PNL_LineNumber.Width - size.Width - 4
-                    : 4;
-
-                e.Graphics.DrawString(lineNumberText, lnFont, brush, x, y);
-
-                // Decide whether this line differs from the saved snapshot.
-                bool isChanged = false;
-
-                if(_hasSavedSnapshot)
-                {
-                    if(line >= _savedLines.Length)
-                    {
-                        isChanged = true;
-                    }
-                    else if(!string.Equals(lines[line], _savedLines[line], StringComparison.Ordinal))
-                    {
-                        isChanged = true;
-                    }
-                }
-                else
-                {
-                    // Before the first save: treat any non-empty line, or any line after the first,
-                    // as "changed" compared to an empty document baseline.
-                    if(!string.IsNullOrEmpty(lines[line]) || line > 0)
-                    {
-                        isChanged = true;
-                    }
-                }
-
-                if(isChanged)
-                {
-                    int y1 = (int)y;
-                    int y2 = (int)(y + size.Height);
-
-                    e.Graphics.DrawLine(changedPen, separatorX, y1, separatorX, y2);
-                }
-            }
-
-            // Adjust panel width so that numbers are not cut off.
-            int desiredWidth = (int)Math.Ceiling(maxNumberWidth) + 8; // padding
-            const int minWidth = 24;
-
-            if(desiredWidth < minWidth)
-            {
-                desiredWidth = minWidth;
-            }
-
-            if(PNL_LineNumber.Width != desiredWidth)
-            {
-                PNL_LineNumber.Width = desiredWidth;
-            }
+            firstLine = 0;
         }
 
-        private void DrawSeparator(PaintEventArgs e)
+        var lastLogicalLine = lines.Length - 1;
+        var maxNumberWidth = 0f;
+        var panelHeight = PNL_LineNumber.Height;
+
+        for(var line = firstLine; line <= lastLogicalLine; line++)
         {
-            int sepWidth = LineNumberSeperatorWith <= 0 ? 1 : LineNumberSeperatorWith;
-            int halfWidth = sepWidth / 2;
+            int charIndex;
 
-            // Centre of the separator line.
-            int separatorX = LineNumberDock == LineNumberDockSide.Left
-                ? PNL_LineNumber.Width - halfWidth - 1
-                : halfWidth;
-
-            using Pen pen = new(LineNumberSeperatorColor, sepWidth);
-            e.Graphics.DrawLine(pen, separatorX, 0, separatorX, PNL_LineNumber.Height);
-        }
-
-        // ---------------------------------------------------------
-
-        protected override void Dispose(bool disposing)
-        {
-            if(disposing)
+            if(line == firstLine)
             {
-                LineNumberFont?.Dispose();
+                charIndex = firstCharIndex;
             }
-            base.Dispose(disposing);
+            else
+            {
+                charIndex = RTB_Text.GetFirstCharIndexFromLine(line);
+
+                if(charIndex < 0)
+                {
+                    continue;
+                }
+            }
+
+            Point position = RTB_Text.GetPositionFromCharIndex(charIndex);
+            float y = position.Y;
+
+            if(y > panelHeight)
+            {
+                break;
+            }
+
+            var lineNumberText = (line + 1).ToString();
+
+            SizeF size = e.Graphics.MeasureString(lineNumberText, lineNumberFont);
+
+            if(size.Width > maxNumberWidth)
+            {
+                maxNumberWidth = size.Width;
+            }
+
+            var x = LineNumberDock == LineNumberDockSide.Left
+                ? PNL_LineNumber.Width - size.Width - 4
+                : 4;
+
+            e.Graphics.DrawString(lineNumberText, lineNumberFont, brush, x, y);
+
+            var isChanged = false;
+
+            if(_hasSavedSnapshot)
+            {
+                if(line >= _savedLines.Length)
+                {
+                    isChanged = true;
+                }
+                else if(!string.Equals(lines[line], _savedLines[line], StringComparison.Ordinal))
+                {
+                    isChanged = true;
+                }
+            }
+            else
+            {
+                if(!string.IsNullOrEmpty(lines[line]) || line > 0)
+                {
+                    isChanged = true;
+                }
+            }
+
+            if(isChanged)
+            {
+                var y1 = (int)y;
+                var y2 = (int)(y + size.Height);
+
+                e.Graphics.DrawLine(changedPen, separatorX, y1, separatorX, y2);
+            }
         }
+
+        var desiredWidth = (int)Math.Ceiling(maxNumberWidth) + 8;
+        const int minWidth = 24;
+
+        if(desiredWidth < minWidth)
+        {
+            desiredWidth = minWidth;
+        }
+
+        if(PNL_LineNumber.Width != desiredWidth)
+        {
+            PNL_LineNumber.Width = desiredWidth;
+        }
+    }
+
+    private void DrawSeparator(PaintEventArgs e)
+    {
+        var separatorWidth = LineNumberSeperatorWith <= 0 ? 1 : LineNumberSeperatorWith;
+        var halfWidth = separatorWidth / 2;
+
+        var separatorX = LineNumberDock == LineNumberDockSide.Left
+            ? PNL_LineNumber.Width - halfWidth - 1
+            : halfWidth;
+
+        using Pen pen = new(LineNumberSeperatorColor, separatorWidth);
+
+        e.Graphics.DrawLine(
+            pen,
+            separatorX,
+            0,
+            separatorX,
+            PNL_LineNumber.Height);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if(disposing)
+        {
+            LineNumberFont?.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 }

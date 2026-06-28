@@ -8,3 +8,7 @@ https://www.pinoleekz.de
 
 GitHub repository:
 https://github.com/PIN0L33KZ/LeekzCodeTextBox
+
+## License
+
+This project is licensed under the MIT License.
