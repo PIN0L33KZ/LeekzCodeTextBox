@@ -10,12 +10,14 @@
 
 		<!-- NuGet metadata -->
 		<PackageId>Leekz.CodeTextBox</PackageId>
-		<Version>1.0.1</Version>
+		<Version>1.0.2</Version>
 		<Authors>PIN0L33KZ</Authors>
 		<Company>PIN0L33KZ GbR</Company>
+		<Copyright>Copyright © 2026 PIN0L33KZ GbR</Copyright>
 		<Product>LeekzCodeTextBox</Product>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
 
+		<PackageIcon>nuget-icon.png</PackageIcon>
 		<PackageReleaseNotes>
 			Added RichTextBox selection/highlighting wrapper API, improved redraw performance, and fixed C# 10 compatibility.
 		</PackageReleaseNotes>
@@ -36,7 +38,13 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<!-- Logo in das Paket einpacken, im Asset Ordner -->
+		<None Include="Assets\nuget-icon.png" Pack="true" PackagePath="\" />
 		<!-- README in das Paket einpacken, im Root des .nupkg -->
 		<None Include="README.md" Pack="true" PackagePath="\" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="Assets\" />
 	</ItemGroup>
 </Project>
